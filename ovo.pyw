@@ -10,6 +10,8 @@ already keeps in ~/.codex/auth.json, so there is no sign-in at all.
 Drag to move (position is remembered). Right-click for the menu, including Settings.
 """
 import base64
+import hashlib
+import io
 import json
 import os
 import re
@@ -18,7 +20,9 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -30,11 +34,17 @@ ASSETS = Path(getattr(sys, '_MEIPASS', HERE)) / 'assets'
 # %APPDATA%\Ovo (the exe may sit in a read-only folder); running the script keeps it next to the script.
 DATA = Path(os.environ.get('APPDATA', HERE)) / 'Ovo' if FROZEN else HERE / 'data'
 SETTINGS_FILE, POS_FILE, PROFILE = DATA / 'settings.json', DATA / 'position.json', DATA / 'webview-profile'
+UPDATE_FILE = DATA / 'update.json'  # which version you chose "Later" for, and until when
+REPO = '1iiron/ovo'  # where releases are published
+RELEASES_API = f'https://api.github.com/repos/{REPO}/releases/latest'
+UPDATE_HOSTS = ('api.github.com', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com')
+CHECK_EVERY = 6 * 3600  # seconds between update checks
+MAX_ZIP = 80 * 1024 * 1024  # the biggest download Ovo will accept
 RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'  # Windows starts what is listed here at sign-in
 EVERY = 3  # seconds between refreshes
 W, H_BASE, H_GROUP = 316, 52, 50  # window width; height is H_BASE + H_GROUP for each provider shown
 CHOICES = {'claude': ['claude'], 'codex': ['codex'], 'both': ['claude', 'codex']}  # what the setup screen offers
-OPTIONS = {'startup': False, 'alerts': True, 'hide_fullscreen': True}  # the on/off settings, and their defaults
+OPTIONS = {'startup': False, 'alerts': True, 'hide_fullscreen': True, 'updates': True}  # on/off settings and defaults
 
 # Both providers produce {session, week: {utilization, resets_at (ISO)}}, or an error dict:
 # {status: <http error>} from a fetch script, {error: <text>} from read_codex.
@@ -127,7 +137,7 @@ HTML = """<!doctype html><meta charset=utf-8>__CSP__
          background: linear-gradient(180deg, #252523, #1b1b1a); color: #ecebe8;
          border: 1px solid transparent; border-image: linear-gradient(120deg, #d97757, #7a95ff) 1;
          font: 12px 'Segoe UI Variable Text', 'Segoe UI', sans-serif; }
-  .head { display: flex; align-items: center; gap: 8px; }
+  .head { display: flex; align-items: center; gap: 8px; min-height: 26px; }
   .head img { width: 22px; height: 22px; flex: none; }
   #hello { font: 13.5px Georgia, 'Times New Roman', serif; white-space: nowrap; overflow: hidden;
            text-overflow: ellipsis; }
@@ -135,6 +145,16 @@ HTML = """<!doctype html><meta charset=utf-8>__CSP__
   body[data-alert="90"] { --alert: #e5484d; }
   body[data-alert="reset"] { --alert: #3fb27f; }
   body[data-alert] #hello { color: var(--alert); font: 600 12.5px 'Segoe UI Variable Text', 'Segoe UI', sans-serif; }
+  #upd { display: none; flex: 1; min-width: 0; align-items: center; gap: 6px; }
+  body.updating:not([data-alert]) #hello { display: none; }
+  body.updating:not([data-alert]) #upd { display: flex; }
+  #updtext { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+             font: 600 12px 'Segoe UI Variable Text', 'Segoe UI', sans-serif; }
+  #upd button { font: 600 11px 'Segoe UI', sans-serif; padding: 3px 9px; border-radius: 6px; cursor: pointer;
+                color: #ecebe8; background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .18); }
+  #upd button:hover { background: rgba(255, 255, 255, .16); }
+  #upd #updgo { color: #1b1b1a; background: #ecebe8; border-color: #ecebe8; }
+  #upd #updgo:hover { background: #fff; }
   @keyframes pulse { 50% { box-shadow: inset 0 0 0 2px var(--alert); } }
   #groups { display: contents; }
   .group { display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: center; padding-top: 6px;
@@ -164,7 +184,8 @@ HTML = """<!doctype html><meta charset=utf-8>__CSP__
                  background: none; color: #ecebe8; font: 11.5px 'Segoe UI', sans-serif; cursor: default; }
   #menu button:hover, #menu button:focus-visible { background: rgba(255, 255, 255, .1); outline: none; }
 </style>
-<div class=head><img id=ovo alt="Ovo"><div id=hello></div></div>
+<div class=head><img id=ovo alt="Ovo"><div id=hello></div>
+  <div id=upd><span id=updtext></span><button id=updgo></button><button id=updlater></button></div></div>
 <div id=groups></div>
 <div id=menu role=menu>
   <button role=menuitem data-a=refresh>Refresh now</button>
@@ -194,6 +215,19 @@ HTML = """<!doctype html><meta charset=utf-8>__CSP__
   document.addEventListener('mousedown', e => { if (!menu.contains(e.target)) closeMenu(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
   window.addEventListener('blur', closeMenu);
+
+  function updateUI(text, go, later) {  // the update prompt in the header; null for text hides it
+    document.body.classList.toggle('updating', text !== null);
+    if (text === null) return;
+    document.getElementById('updtext').textContent = text;
+    [['updgo', go], ['updlater', later]].forEach(([id, label]) => {
+      const b = document.getElementById(id);
+      b.textContent = label || '';
+      b.style.display = label ? '' : 'none';
+    });
+  }
+  document.getElementById('updgo').onclick = () => pywebview.api.update_action('go');
+  document.getElementById('updlater').onclick = () => pywebview.api.update_action('later');
 
   // Warning colors follow how much is used, so for a "remaining" provider a low number is the red one.
   const color = (p, pct) => {
@@ -299,6 +333,7 @@ SETUP_HTML = """<!doctype html><meta charset=utf-8>__CSP__
   #go:disabled { opacity: .35; cursor: default; }
   #go:not(:disabled):hover { background: #fff; }
   footer { margin-top: 10px; text-align: center; color: #6f6d69; font-size: 11px; }
+  footer a { color: #a3a19c; } footer a:hover { color: #ecebe8; } #chkres { color: #a3a19c; }
 </style>
 <header><img id=logo alt="Ovo"><h1 id=title></h1><p>Claude and Codex usage, at a glance.</p></header>
 <label class=label for=name>What should we call you?</label>
@@ -310,10 +345,11 @@ SETUP_HTML = """<!doctype html><meta charset=utf-8>__CSP__
   <label><input type=checkbox id=startup> Start Ovo when Windows starts</label>
   <label><input type=checkbox id=alerts> Notify me at 80% and 90%, and when a limit resets</label>
   <label><input type=checkbox id=hide_fullscreen> Hide while a full-screen app is running</label>
+  <label><input type=checkbox id=updates> Check for updates (always asks before installing)</label>
 </div>
 <div id=err></div>
 <button id=go></button>
-<footer id=ver></footer>
+<footer><span id=ver></span> · <a href="#" id=chk>Check for updates</a> <span id=chkres></span></footer>
 <script>
   const CFG = __CONFIG__;
   const $ = id => document.getElementById(id);
@@ -321,6 +357,11 @@ SETUP_HTML = """<!doctype html><meta charset=utf-8>__CSP__
   $('title').textContent = CFG.editing ? 'Settings' : 'Welcome to Ovo';
   $('go').textContent = CFG.editing ? 'Save and restart' : 'Start Ovo';
   $('ver').textContent = 'Ovo ' + CFG.version;
+  $('chk').onclick = async e => {
+    e.preventDefault();
+    $('chkres').textContent = 'Checking…';
+    $('chkres').textContent = await pywebview.api.check_updates();
+  };
   const CHOICES = [
     {id: 'claude', label: 'Claude', logos: [CFG.claude], color: '#d97757',
      hint: "You'll sign in to claude.ai once, in a small window. Ovo then keeps you signed in."},
@@ -457,6 +498,138 @@ def load_settings():
         return parse_settings(json.loads(SETTINGS_FILE.read_text()))
     except (OSError, ValueError):
         return None
+
+
+def parse_version(text):
+    """(1, 2, 3) from '1.2.3' or 'v1.2.3'; None for anything else (a pre-release tag, a typo, junk)."""
+    match = re.fullmatch(r'v?(\d{1,4})\.(\d{1,4})\.(\d{1,4})', text) if isinstance(text, str) else None
+    return tuple(int(part) for part in match.groups()) if match else None
+
+
+def allowed_url(url):
+    """True for an https address on GitHub's own hosts (and nothing else)."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        return parts.scheme == 'https' and parts.hostname in UPDATE_HOSTS and not parts.username and parts.port in (None, 443)
+    except ValueError:
+        return False
+
+
+class GitHubRedirects(urllib.request.HTTPRedirectHandler):
+    """GitHub sends downloads on to its own storage hosts. Follow that, but only to hosts on the list."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return super().redirect_request(req, fp, code, msg, headers, newurl) if allowed_url(newurl) else None
+
+
+UPDATE_OPENER = urllib.request.build_opener(GitHubRedirects)  # HTTPS with certificate checks, the default
+
+
+def fetch(url, limit):
+    """The bytes at an https GitHub address, at most `limit` of them. Sends no login or personal data."""
+    if not allowed_url(url):
+        raise ValueError('address not allowed')
+    request = urllib.request.Request(url, headers={'User-Agent': f'Ovo/{VERSION}', 'Accept': 'application/vnd.github+json'})
+    with UPDATE_OPENER.open(request, timeout=30) as reply:
+        data = reply.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError('reply too large')
+    return data
+
+
+def find_update(data, current):
+    """The update to offer from GitHub's "latest release" reply, or None when nothing newer is there or the reply
+    isn't one Ovo trusts. The reply only says which version and files exist; the download addresses are built here
+    from the version, never taken from the reply."""
+    if not isinstance(data, dict) or data.get('draft') or data.get('prerelease'):
+        return None
+    tag = data.get('tag_name')
+    version = parse_version(tag)
+    if not version or version <= current or tag != 'v' + '.'.join(map(str, version)):
+        return None
+    text = '.'.join(map(str, version))
+    zip_name = f'Ovo-{text}-windows.zip'
+    names = {a.get('name') for a in data.get('assets') or [] if isinstance(a, dict)}
+    if not {zip_name, zip_name + '.sha256'} <= names:
+        return None  # the release isn't complete yet
+    base = f'https://github.com/{REPO}/releases/'
+    return {'version': text, 'zip_name': zip_name, 'page': f'{base}tag/{tag}',
+            'zip_url': f'{base}download/{tag}/{zip_name}', 'sha_url': f'{base}download/{tag}/{zip_name}.sha256'}
+
+
+def latest_update(fetcher=fetch):
+    """The update on offer, or None if you're up to date. Raises OSError or ValueError if GitHub can't be asked."""
+    return find_update(json.loads(fetcher(RELEASES_API, 1_000_000)), parse_version(VERSION))
+
+
+def expected_hash(text, zip_name):
+    """The SHA-256 from a checksum file ('<64 hex digits>  <file name>'), or ValueError if it isn't one for this zip."""
+    parts = text.split()
+    if not parts or not re.fullmatch(r'[0-9a-fA-F]{64}', parts[0]) or (len(parts) > 1 and parts[1].lstrip('*') != zip_name):
+        raise ValueError('unreadable checksum')
+    return parts[0].lower()
+
+
+def download_update(offer, dest, fetcher=fetch):
+    """Download the new Ovo.exe to `dest`, only after its checksum matches. Raises ValueError when anything is off."""
+    archive = fetcher(offer['zip_url'], MAX_ZIP)
+    want = expected_hash(fetcher(offer['sha_url'], 4096).decode('ascii'), offer['zip_name'])
+    if hashlib.sha256(archive).hexdigest() != want:
+        raise ValueError('checksum mismatch')
+    with zipfile.ZipFile(io.BytesIO(archive)) as z:
+        if z.getinfo('Ovo.exe').file_size > MAX_ZIP:  # also guards against a zip that unpacks to something huge
+            raise ValueError('file too large')
+        exe = z.read('Ovo.exe')  # only this one name is ever read, so no path in the zip is used
+    if not exe.startswith(b'MZ'):
+        raise ValueError('not a Windows program')
+    dest.write_bytes(exe)
+    return dest
+
+
+def apply_update(new_exe, current_exe):
+    """Swap the running Ovo.exe for the new one. Windows lets a running program be renamed, so the old one is kept
+    as Ovo.exe.old until the next start, and put back if the swap fails."""
+    old = current_exe.with_name(current_exe.name + '.old')
+    old.unlink(missing_ok=True)
+    current_exe.rename(old)
+    try:
+        new_exe.replace(current_exe)
+    except OSError:
+        old.rename(current_exe)
+        raise
+
+
+def clean_update_leftovers():
+    if FROZEN:
+        for suffix in ('.old', '.new'):
+            Path(sys.executable).with_name(Path(sys.executable).name + suffix).unlink(missing_ok=True)
+
+
+def can_self_update():
+    """True for the packaged exe when its folder can be written to. (From source, Ovo just opens the release page.)"""
+    if not FROZEN:
+        return False
+    try:
+        probe = Path(sys.executable).with_name('.ovo-write-test')
+        probe.write_bytes(b'')
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def snoozed(version, now=None, file=None):
+    """True if you chose "Later" for this version less than a day ago."""
+    try:
+        saved = json.loads((file or UPDATE_FILE).read_text())
+        return saved.get('version') == version and saved.get('until', 0) > (now or time.time())
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def snooze(version, file=None):
+    file = file or UPDATE_FILE
+    file.parent.mkdir(parents=True, exist_ok=True)
+    file.write_text(json.dumps({'version': version, 'until': time.time() + 24 * 3600}))
 
 
 def eval_async(window, script, site, timeout=15):
@@ -611,9 +784,68 @@ def watch_fullscreen(widget):
         time.sleep(2)
 
 
+def update_ui(text, go=None, later=None):
+    """Show the update prompt in Ovo's header (or hide it, with text None)."""
+    try:
+        ui['widget'].evaluate_js(f'updateUI({json.dumps(text)}, {json.dumps(go)}, {json.dumps(later)})')
+    except Exception:
+        pass  # the window isn't ready, or is closing
+
+
+def show_offer(offer):
+    ui['update'] = {'offer': offer, 'stage': 'offer'}
+    update_ui(f"Ovo {offer['version']} is available", 'Update', 'Later')
+
+
+def update_loop():
+    """Look for a new release now and then. It only ever asks: nothing is installed unless you press Update."""
+    if quitting.wait(30):  # let the window settle first
+        return
+    while True:
+        if ui['settings']['updates']:
+            try:
+                offer = latest_update()
+            except (OSError, ValueError):
+                offer = None  # offline, rate-limited, or no release visible: try again later
+            if offer and not snoozed(offer['version']) and not ui.get('update'):
+                show_offer(offer)
+        if quitting.wait(CHECK_EVERY):
+            return
+
+
+def open_release_page(offer):
+    import webbrowser
+    webbrowser.open(offer['page'])  # the address was built from the checked version, not taken from the reply
+
+
+def install_update():
+    """You pressed Update. The packaged exe downloads, checks and swaps itself, then restarts; a script run from
+    source opens the release page instead."""
+    offer = ui['update']['offer']
+    try:
+        if can_self_update():
+            exe = Path(sys.executable)
+            update_ui('Downloading…')
+            new = download_update(offer, exe.with_name(exe.name + '.new'))
+            update_ui('Installing…')
+            apply_update(new, exe)
+            update_ui('Restarting…')
+            restart()
+            shut_down()
+        else:
+            open_release_page(offer)
+            snooze(offer['version'])
+            ui.pop('update', None)
+            update_ui(None)
+    except Exception:  # whatever went wrong, the running copy still works: say so and offer the page
+        ui['update']['stage'] = 'failed'
+        update_ui("Couldn't update", 'Open page', 'Close')
+
+
 def run(feed, widget, active):
     for key in active:
         threading.Thread(target=poll, args=(key, feed if key == 'claude' else None, widget), daemon=True).start()
+    threading.Thread(target=update_loop, daemon=True).start()
     if ui['settings']['hide_fullscreen']:
         threading.Thread(target=watch_fullscreen, args=(widget,), daemon=True).start()
 
@@ -704,13 +936,27 @@ def open_setup(settings):
               'editing': bool(settings), 'version': VERSION}
     window = webview.create_window('Ovo settings' if settings else 'Welcome to Ovo',
                                    html=page(SETUP_HTML, config), js_api=SetupApi(),
-                                   width=440, height=720, resizable=False, background_color='#1f1f1e')
+                                   width=440, height=760, resizable=False, background_color='#1f1f1e')
     ui['setup'] = window
     window.events.shown += lambda: brand((window, 'ovo.ico'))
     window.events.closed += lambda: ui.pop('setup', None)
 
 
 class SetupApi:
+    def check_updates(self):
+        """The "Check for updates" link in Settings. Returns the sentence to show next to it."""
+        try:
+            offer = latest_update()
+        except (OSError, ValueError):
+            return "Couldn't check right now."
+        if not offer:
+            return f'Ovo {VERSION} is up to date.'
+        if ui.get('widget'):
+            if not ui.get('update'):
+                show_offer(offer)
+            return f"Ovo {offer['version']} is available. See the Ovo window."
+        return f"Ovo {offer['version']} is available."
+
     def save(self, name, choice, options):
         """Called by the setup page. Returns a message if something is wrong, otherwise restarts Ovo."""
         name = clean_name(name)
@@ -746,12 +992,27 @@ class Api:
     def settings(self):
         open_setup(load_settings())
 
+    def update_action(self, which):
+        """The two buttons of the update prompt: 'go' (Update, or Open page after a failure) and 'later'."""
+        current = ui.get('update')
+        if not current:
+            return
+        if which == 'go' and current['stage'] == 'offer':
+            threading.Thread(target=install_update, daemon=True).start()
+        elif which == 'go':
+            open_release_page(current['offer'])
+        elif which == 'later':
+            snooze(current['offer']['version'])
+            ui.pop('update', None)
+            update_ui(None)
+
 
 def main():
     import ctypes
     import webview
     if not single_instance(wait=15 if '--restart' in sys.argv else 0):
         return
+    clean_update_leftovers()  # the copy of Ovo.exe that an update replaced
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Ovo')  # the taskbar groups it as Ovo, not Python
     # Keep the embedded browser as closed as it can be. Set explicitly, so a different default in a future
     # pywebview cannot loosen it: no local debugging port, no file:// pages, no downloads, certificate errors
@@ -846,7 +1107,8 @@ def self_test():
     assert CODEX_URL.startswith('https://chatgpt.com/')
     assert clean_name('  Alex   M ') == 'Alex M' and clean_name('   ') is None and clean_name('x' * 25) is None
     assert parse_settings({'name': 'Alex', 'providers': ['codex', 'nope']}) == \
-        {'name': 'Alex', 'providers': ['codex'], 'startup': False, 'alerts': True, 'hide_fullscreen': True}
+        {'name': 'Alex', 'providers': ['codex'], 'startup': False, 'alerts': True, 'hide_fullscreen': True,
+         'updates': True}
     assert parse_settings({'name': 'K', 'providers': ['claude'], 'alerts': False})['alerts'] is False
     assert parse_settings({'name': 'Alex', 'providers': []}) is None and parse_settings({'name': ''}) is None
     assert parse_settings('junk') is None and parse_settings(None) is None
@@ -878,7 +1140,99 @@ def self_test():
     assert "default-src 'none'" in CSP and 'connect-src' not in CSP  # nothing is allowed to connect anywhere
     assert all((ASSETS / f).exists() for f in ('ovo.png', 'ovo.ico', 'claude.ico')) \
         and all((ASSETS / p['logo']).exists() for p in PROVIDERS.values())
+    self_test_updates()
     print('ok')
+
+
+def self_test_updates():
+    import tempfile
+    # Which release counts as newer: compared as numbers, and only a plain vX.Y.Z tag.
+    assert parse_version('v1.2.3') == (1, 2, 3) and parse_version('1.10.0') > parse_version('1.9.9')
+    for junk in ('1.2', 'v1.2.3-beta', 'latest', '1.2.3.4', '', None, 5, 'v1.2.3 '):
+        assert parse_version(junk) is None, junk
+
+    def release(tag, names=None, **extra):
+        name = f"Ovo-{tag.lstrip('v')}-windows.zip"
+        return dict({'tag_name': tag, 'assets': [{'name': n} for n in (names or [name, name + '.sha256'])]}, **extra)
+    current = (1, 0, 0)
+    offer = find_update(release('v1.1.0'), current)
+    assert offer and offer['version'] == '1.1.0' and offer['page'] == f'https://github.com/{REPO}/releases/tag/v1.1.0'
+    assert offer['zip_url'] == f'https://github.com/{REPO}/releases/download/v1.1.0/Ovo-1.1.0-windows.zip'
+    assert offer['sha_url'] == offer['zip_url'] + '.sha256'
+    # Nothing to offer: same or older version, drafts, pre-releases, an incomplete or odd release.
+    for none in (release('v1.0.0'), release('v0.9.0'), release('v1.1.0', draft=True), release('v1.1.0', prerelease=True),
+                 release('v1.1.0', names=['Ovo-1.1.0-windows.zip']), release('v1.1.0', names=['evil.zip', 'evil.zip.sha256']),
+                 release('1.1.0'), None, 'x', [], {'tag_name': 5}, {'tag_name': 'v2.0.0', 'assets': 'nope'},
+                 {'tag_name': 'v2.0.0', 'assets': [None, 3]}):
+        assert find_update(none, current) is None, none
+    # The download addresses are built from the checked version, so a hostile reply cannot point Ovo elsewhere.
+    hostile = release('v1.1.0')
+    hostile['assets'][0]['browser_download_url'] = 'https://evil.example/x.zip'
+    assert find_update(hostile, current)['zip_url'].startswith('https://github.com/')
+    # Only GitHub's own https hosts are ever contacted, and a redirect cannot leave that list.
+    assert allowed_url(RELEASES_API) and allowed_url(offer['zip_url']) and allowed_url('https://objects.githubusercontent.com/x')
+    for bad in ('http://github.com/x', 'https://evil.example/x', 'https://github.com.evil.example/x', 'https://u@github.com/x',
+                'https://github.com:8443/x', 'file:///c:/x', 'ftp://github.com/x', '', 'github.com'):
+        assert not allowed_url(bad), bad
+    assert GitHubRedirects().redirect_request(urllib.request.Request('https://github.com/a'), None, 302, 'Found', {},
+                                              'https://evil.example/') is None
+    try:
+        fetch('http://github.com/x', 10)
+        raise AssertionError('fetched an address that is not allowed')
+    except ValueError:
+        pass
+    assert FROZEN or not can_self_update()  # a script run from source never replaces itself
+
+    # Installing: the checksum is checked first, and only a plain Ovo.exe is taken from the zip.
+    exe_bytes = b'MZ' + b'\0' * 100
+
+    def make_zip(members):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w') as z:
+            for member, data in members.items():
+                z.writestr(member, data)
+        return buffer.getvalue()
+
+    def serve(archive, checksum):
+        return lambda url, limit: archive if url == offer['zip_url'] else checksum.encode()
+    name = offer['zip_name']
+    good = make_zip({'Ovo.exe': exe_bytes, 'README.md': b'hi'})
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        done = download_update(offer, tmp / 'Ovo.exe.new', serve(good, f'{hashlib.sha256(good).hexdigest()}  {name}'))
+        assert done.read_bytes() == exe_bytes
+        wrong_member, not_exe = make_zip({'Other.exe': exe_bytes}), make_zip({'Ovo.exe': b'not a program'})
+        for archive, checksum in ((good, '0' * 64 + f'  {name}'), (good, 'garbage'), (good, ''),
+                                  (good, f'{hashlib.sha256(good).hexdigest()}  other.zip'),
+                                  (wrong_member, f'{hashlib.sha256(wrong_member).hexdigest()}  {name}'),
+                                  (not_exe, f'{hashlib.sha256(not_exe).hexdigest()}  {name}'),
+                                  (b'not a zip', f'{hashlib.sha256(b"not a zip").hexdigest()}  {name}')):
+            try:
+                download_update(offer, tmp / 'bad.new', serve(archive, checksum))
+                raise AssertionError('accepted a bad update')
+            except (ValueError, KeyError, zipfile.BadZipFile):
+                pass
+        assert not (tmp / 'bad.new').exists()  # nothing is written until every check has passed
+        # Swapping the files in place, and putting the working copy back if the swap fails.
+        current_exe, new_exe = tmp / 'Ovo.exe', tmp / 'swap.new'
+        current_exe.write_bytes(b'old')
+        new_exe.write_bytes(b'new')
+        apply_update(new_exe, current_exe)
+        assert current_exe.read_bytes() == b'new' and (tmp / 'Ovo.exe.old').read_bytes() == b'old' and not new_exe.exists()
+        try:
+            apply_update(tmp / 'missing.new', current_exe)
+            raise AssertionError('the swap should have failed')
+        except OSError:
+            pass
+        assert current_exe.read_bytes() == b'new'
+        # "Later" is remembered for a day, for that version only.
+        remembered = tmp / 'update.json'
+        assert not snoozed('1.1.0', file=remembered)
+        snooze('1.1.0', file=remembered)
+        assert snoozed('1.1.0', file=remembered) and not snoozed('1.2.0', file=remembered)
+        assert not snoozed('1.1.0', now=time.time() + 25 * 3600, file=remembered)
+        remembered.write_text('junk')
+        assert not snoozed('1.1.0', file=remembered)
 
 
 if __name__ == '__main__':

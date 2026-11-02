@@ -48,3 +48,20 @@ Don't paste anything from the `data/` folder or `~/.codex/auth.json`. They conta
 - Update the README if you change what users see.
 
 By contributing you agree your work is released under the project's [MIT license](LICENSE).
+
+## Releasing a new version (for maintainers)
+
+Versions are three numbers: `1.1.0`. Ovo checks GitHub's latest release and offers the update to anyone running an older one.
+
+1. Add a section to [CHANGELOG.md](CHANGELOG.md), newest first: `## 1.1.0 - 2026-12-01`, then the changes as a short list. That text becomes the release notes.
+2. Make sure your work is committed and on `main`.
+3. Run:
+
+   ```bash
+   python tools/release.py 1.1.0 --dry-run   # checks everything, changes nothing
+   python tools/release.py 1.1.0             # bumps VERSION, commits, tags v1.1.0 and pushes
+   ```
+
+4. Pushing the tag starts the **Release** workflow (`.github/workflows/release.yml`). It checks the tag matches `VERSION`, runs the self-test, builds `Ovo.exe`, writes the checksum and publishes the release with the zip and `.sha256` file attached. Watch it in the repository's **Actions** tab.
+
+Never edit or re-upload files on a published release: the checksum Ovo checks is the one published with it. If a release is wrong, publish a new, higher version.

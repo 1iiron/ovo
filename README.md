@@ -4,7 +4,7 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-7a95ff?labelColor=252523"></a>
   <img alt="Windows 10 and 11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-d97757?labelColor=252523">
   <img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-ecebe8?labelColor=252523">
-  <img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-ecebe8?labelColor=252523">
+  <a href="https://github.com/1iiron/ovo/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/1iiron/ovo?color=ecebe8&labelColor=252523"></a>
 </p>
 
 <p align="center">
@@ -34,6 +34,7 @@
 | **Alerts** | An amber message at 80%, red at 90%, and green when a limit resets. Windows notifications too. |
 | **Stays out of the way** | Hides while a game, video or presentation is full-screen, and comes back after. |
 | **Starts with Windows** | Optional. |
+| **Updates itself, if you say so** | Tells you when a new version is out and asks before installing it. |
 | **Private** | Your numbers go from the services to your screen and nowhere else. No account, no telemetry. |
 
 ## Install
@@ -90,10 +91,19 @@ Right-click Ovo for the menu:
 |---|---|
 | **Refresh now** | Check immediately. |
 | **Reset position** | Move Ovo back to the bottom-right corner. |
-| **Settings…** | Change your name, what you use, or the options. Ovo restarts to apply them. |
+| **Settings…** | Change your name, what you use, or the options (start with Windows, alerts, hide in full-screen, update checks). Ovo restarts to apply them. It also has a **Check for updates** link. |
 | **Quit** | Close Ovo. |
 
 Drag the window to move it. Ovo remembers where you put it.
+
+## Updates
+
+Ovo checks GitHub for a new version when it starts and every few hours. When one is out, the greeting is replaced by "Ovo 1.1.0 is available" with two buttons:
+
+- **Update**: the app downloads the new version, checks it against its published checksum, swaps itself and restarts. If you run Ovo from source, it opens the release page instead.
+- **Later**: Ovo asks again tomorrow.
+
+Nothing is ever installed unless you press **Update**. Turn the check off, or check right now, under **Settings…**.
 
 ## How it works
 
@@ -107,7 +117,7 @@ Your settings, Claude login and window position live in the `data/` folder next 
 ### Safe by design
 
 - **Local only.** Ovo opens no port and no server. Nothing can connect to it.
-- **Two destinations.** It talks only to claude.ai and chatgpt.com over HTTPS. No telemetry, no updates check.
+- **Three destinations.** It talks only to claude.ai and chatgpt.com (your numbers) and github.com (the update check, which you can turn off) over HTTPS. No telemetry.
 - **Your Codex login is only read**, sent only to chatgpt.com, and the request never follows a redirect.
 - **Replies are checked** before use and shown as plain text, never as code.
 - **Its windows can't call out.** Ovo's pages carry a policy that lets them load nothing from the network.
@@ -122,7 +132,7 @@ The full list, and what it can't protect against, is in [SECURITY.md](SECURITY.m
 - If you run `install`: a shortcut at `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Ovo.lnk`.
 - Alerts show a Windows notification from a temporary tray icon that disappears afterwards.
 
-Nothing else. Ovo talks only to claude.ai and chatgpt.com.
+Nothing else. Ovo talks only to claude.ai and chatgpt.com, plus github.com for the update check.
 </details>
 
 ## FAQ

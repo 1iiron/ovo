@@ -1,0 +1,46 @@
+name: Release
+
+# Runs when a version tag like v1.1.0 is pushed (python tools/release.py does that for you). It builds Ovo.exe,
+# writes the checksum, and publishes the GitHub release that Ovo's update check looks for.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+
+      - name: Check the tag matches VERSION in the code
+        shell: python
+        run: |
+          import os, re
+          tag = os.environ['GITHUB_REF_NAME']
+          version = re.search(r"^VERSION = '([^']+)'", open('ovo.pyw', encoding='utf-8').read(), re.M).group(1)
+          assert tag == 'v' + version, f'the tag {tag} does not match VERSION {version} in ovo.pyw'
+
+      - name: Self-test
+        run: python ovo.pyw --test
+
+      - name: Build Ovo.exe, the zip and its checksum
+        run: |
+          pip install -r requirements.txt pyinstaller
+          python tools/build.py
+
+      - name: Publish the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python tools/release.py --notes "$version" > notes.md
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/Ovo-$version-windows.zip" "dist/Ovo-$version-windows.zip.sha256" \
+            --title "Ovo $version" --notes-file notes.md --verify-tag

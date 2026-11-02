@@ -1,5 +1,6 @@
 """Builds the shareable app: dist/Ovo.exe (one file, no console window) and dist/Ovo-<version>-windows.zip.
 Needs PyInstaller: python tools/build.py"""
+import hashlib
 import re
 import subprocess
 import sys
@@ -35,4 +36,7 @@ archive = DIST / f'Ovo-{version}-windows.zip'
 with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
     z.write(DIST / 'Ovo.exe', 'Ovo.exe')
     z.write(ROOT / 'README.md', 'README.md')
-print('built', DIST / 'Ovo.exe', 'and', archive)
+# The update check in Ovo downloads this next to the zip and refuses the zip if the two don't match.
+checksum = archive.with_name(archive.name + '.sha256')
+checksum.write_text(f'{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n')
+print('built', DIST / 'Ovo.exe', archive, 'and', checksum)
