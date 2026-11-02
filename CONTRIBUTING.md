@@ -59,8 +59,10 @@ Versions are three numbers: `1.1.0`. Ovo checks GitHub's latest release and offe
 
    ```bash
    python tools/release.py 1.1.0 --dry-run   # checks everything, changes nothing
-   python tools/release.py 1.1.0             # bumps VERSION, commits, tags v1.1.0 and pushes
+   python tools/release.py 1.1.0             # bumps VERSION, rewrites the README, commits, tags v1.1.0 and pushes
    ```
+
+   The script also rewrites the README's release text in that same commit: the release badge, the "Latest release" box (version, date, what's new, download link) and the download link in the install steps. They sit between the `<!-- latest-release:start -->` and `<!-- zip:start -->` markers, so leave those markers in place.
 
 4. Pushing the tag starts the **Release** workflow (`.github/workflows/release.yml`). It checks the tag matches `VERSION`, runs the self-test, builds `Ovo.exe`, writes the checksum and publishes the release with the zip and `.sha256` file attached. Watch it in the repository's **Actions** tab.
 

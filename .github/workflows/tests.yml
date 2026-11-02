@@ -21,3 +21,4 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: python ovo.pyw --test
+      - run: python tools/release.py --selftest

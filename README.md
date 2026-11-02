@@ -24,6 +24,19 @@
 
 <p align="center"><img src="docs/screenshot.png" width="640" alt="Ovo showing sample Claude and Codex usage"></p>
 
+<!-- latest-release:start -->
+**Latest release: [Ovo 1.0.0](https://github.com/1iiron/ovo/releases/tag/v1.0.0)** · 2026-11-02 · [Download for Windows](https://github.com/1iiron/ovo/releases/download/v1.0.0/Ovo-1.0.0-windows.zip)
+
+First release.
+
+- One small always-on-top window with your Claude and Codex usage, refreshed every 3 seconds.
+- A setup screen on first run: your name, what you use, and a few options.
+- Pace marker on each bar, and alerts at 80% and 90% and when a limit resets.
+- Hides while a full-screen app is running. Optional start with Windows.
+- Update checks: when a new version is published Ovo tells you and asks before installing anything.
+- Runs fully on your PC: no server, and requests only to claude.ai, chatgpt.com and github.com.
+<!-- latest-release:end -->
+
 ## Features
 
 | | |
@@ -43,7 +56,7 @@ Ovo needs **Windows 10 or 11**.
 
 ### Option 1: the app (no Python needed)
 
-1. Download `Ovo-<version>-windows.zip` from the [Releases](https://github.com/1iiron/ovo/releases) page and unzip it.
+1. Download <!-- zip:start -->[Ovo-1.0.0-windows.zip](https://github.com/1iiron/ovo/releases/download/v1.0.0/Ovo-1.0.0-windows.zip)<!-- zip:end --> from the [Releases](https://github.com/1iiron/ovo/releases) page and unzip it.
 2. Run `Ovo.exe`. The setup screen opens.
 3. Optional: run `Ovo.exe install` once from a terminal to add an "Ovo" shortcut to the Start Menu.
 
