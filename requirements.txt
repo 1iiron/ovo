@@ -1,0 +1,5 @@
+pywebview>=6.2,<7
+# Only to rebuild the icons and pictures (tools/make_assets.py, tools/make_media.py):
+# pillow
+# Only to build the exe (tools/build.py):
+# pyinstaller

@@ -1,0 +1,11 @@
+# Your saved login for claude.ai and the window positions: never share or commit these.
+data/
+__pycache__/
+*.log
+# What tools/build.py produces
+dist/
+build/
+*.spec
+
+# Working notes, not part of the project
+docs/brand-exploration/
