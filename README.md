@@ -4,7 +4,7 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-7a95ff?labelColor=252523"></a>
   <img alt="Windows 10 and 11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-d97757?labelColor=252523">
   <img alt="Python 3.11 or newer" src="https://img.shields.io/badge/python-3.11%2B-ecebe8?labelColor=252523">
-  <a href="https://github.com/1iiron/ovo/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/1iiron/ovo?color=ecebe8&labelColor=252523"></a>
+  <a href="https://github.com/1iiron/ovo/releases"><img alt="Latest release" src="https://img.shields.io/badge/release-1.0.0-ecebe8?labelColor=252523"></a>
 </p>
 
 <p align="center">

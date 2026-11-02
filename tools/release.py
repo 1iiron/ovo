@@ -15,8 +15,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-APP, CHANGELOG = ROOT / 'ovo.pyw', ROOT / 'CHANGELOG.md'
+APP, CHANGELOG, README = ROOT / 'ovo.pyw', ROOT / 'CHANGELOG.md', ROOT / 'README.md'
 VERSION_LINE = re.compile(r"^VERSION = '([^']+)'", re.M)
+BADGE = re.compile(r'(badge/release-)\d+\.\d+\.\d+(-)')  # the release badge at the top of the README
 
 
 def as_tuple(version):
@@ -69,6 +70,8 @@ def main():
     if git('tag', '--list', f'v{args.version}'):
         raise SystemExit(f'The tag v{args.version} already exists.')
     notes = notes_for(args.version)
+    if not BADGE.search(README.read_text(encoding='utf-8')):
+        raise SystemExit('README.md has no release badge (badge/release-X.Y.Z-...) to update.')
     if subprocess.run([sys.executable, str(APP), '--test'], cwd=ROOT).returncode:
         raise SystemExit('The self-test failed, so nothing was released.')
 
@@ -79,6 +82,7 @@ def main():
     if not args.yes and input('Commit, tag and push now? [y/N] ').strip().lower() != 'y':
         raise SystemExit('Cancelled.')
     APP.write_text(VERSION_LINE.sub(f"VERSION = '{args.version}'", APP.read_text(encoding='utf-8'), count=1), encoding='utf-8')
+    README.write_text(BADGE.sub(rf'\g<1>{args.version}\g<2>', README.read_text(encoding='utf-8'), count=1), encoding='utf-8')
     git('commit', '-am', f'Release {args.version}')
     git('tag', '-a', f'v{args.version}', '-m', f'Ovo {args.version}')
     git('push', 'origin', 'main', f'v{args.version}')
